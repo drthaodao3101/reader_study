@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Reader study viewer</title>
+<style>
+:root{--bg:#111;--panel:#1c1c1c;--ink:#e6e6e6;--muted:#9a9a9a;--line:#333;--ok:#5fbf77;--warn:#e0b050}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.4 system-ui,sans-serif}
+header{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:8px 12px;background:var(--panel);border-bottom:1px solid var(--line)}
+select,button,input,textarea{background:#262626;color:var(--ink);border:1px solid var(--line);border-radius:4px;padding:4px 8px;font:inherit}
+button{cursor:pointer} button:disabled{opacity:.45;cursor:default}
+#info{color:var(--muted);margin-left:auto}
+main{display:flex;gap:0;height:calc(100vh - 84px)}
+#wrap{flex:1;display:flex;justify-content:center;align-items:flex-start;padding:12px;overflow:auto}
+canvas{image-rendering:pixelated;background:#000}
+aside{width:340px;flex:none;overflow:auto;padding:12px;background:var(--panel);border-left:1px solid var(--line)}
+aside h3{margin:0 0 6px;font-size:15px} fieldset{border:1px solid var(--line);border-radius:4px;margin:0 0 10px;padding:6px 8px}
+legend{color:var(--muted);font-size:12px;padding:0 4px} fieldset label{display:block;margin:2px 0;cursor:pointer}
+textarea{width:100%;box-sizing:border-box;min-height:48px}
+.row{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0} .muted{color:var(--muted);font-size:12px}
+#status.ok{color:var(--ok)} #status.warn{color:var(--warn)} #banner{color:var(--warn);font-size:12px}
+footer{padding:4px 12px;color:var(--muted);font-size:12px}
+#gate{position:fixed;inset:0;background:rgba(0,0,0,.85);display:flex;align-items:center;justify-content:center;z-index:9}
+#gate div{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:20px;max-width:420px}
+#adminPanel{display:none;position:fixed;inset:0;z-index:20;background:rgba(0,0,0,.92);overflow:auto;padding:24px;box-sizing:border-box}
+#adminPanel .adminBox{max-width:1100px;margin:0 auto;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:18px}
+#adminPanel h2{margin-top:0}
+#adminPanel input[type=file]{max-width:100%}
+.adminGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin:12px 0}
+.adminCard{background:#252525;border:1px solid var(--line);border-radius:6px;padding:12px}
+.adminTableWrap{overflow:auto;max-height:55vh}
+#adminResults table{border-collapse:collapse;width:100%;font-size:13px}
+#adminResults th,#adminResults td{border:1px solid var(--line);padding:6px 8px;text-align:left;white-space:nowrap}
+#adminResults th{background:#303030;position:sticky;top:0}
+.adminNotice{border-left:3px solid var(--warn);padding:8px 12px;background:#29251c;color:#e7d7aa}
+@media (max-width:800px){main{flex-direction:column;height:auto}aside{width:auto;border-left:0;border-top:1px solid var(--line)}}
+</style></head><body>
+<div id="gate"><div>
+ <h3>Chọn mã reader của anh/chị</h3>
+ <p class="muted">Mỗi người chọn đúng mã reader đã được phân công. Dữ liệu lưu riêng theo mã trên trình duyệt hiện tại; đây không phải cơ chế đăng nhập hay bảo mật.</p>
+ <div class="row"><label><input type="radio" name="who" value="reader_A"> reader_A</label>
+ <label><input type="radio" name="who" value="reader_B"> reader_B</label></div>
+ <div class="row">
+  <button id="enter" disabled>Bắt đầu đánh giá</button>
+  <button type="button" id="adminOpen">Admin dashboard</button>
+ </div>
+</div></div>
+<header>
+ <label>Session <select id="sess"></select></label>
+ <button id="prev">&larr; ca trước</button>
+ <select id="case"></select>
+ <button id="next">ca sau &rarr;</button>
+ <label>Lát <input id="slice" type="range" min="0" value="0" style="width:200px"></label>
+ <label>Zoom <input id="zoom" type="range" min="1" max="3" step="0.25" value="1.5"></label>
+ <span id="info"></span>
+</header>
+<main><div id="wrap"><canvas id="cv"></canvas></div>
+<aside>
+ <h3 id="ftitle"></h3>
+ <div id="banner"></div>
+ <form id="form" autocomplete="off"></form>
+ <div class="row"><button id="save">Lưu và sang ca sau</button></div>
+ <div id="status" class="muted"></div>
+ <hr style="border-color:var(--line)">
+ <div id="progress" class="muted"></div>
+ <div class="row"><button id="export">Xuất CSV session này</button>
+ <label class="muted" style="cursor:pointer"><input type="file" id="import" accept=".csv" style="display:none"><u>Nhập lại CSV nháp</u></label></div>
+ <p class="muted">Kết quả được lưu tự động trên trình duyệt và thiết bị đang sử dụng. Sau khi xong một session, bấm "Xuất CSV" và gửi file cho người điều phối. Dữ liệu không tự đồng bộ giữa hai readers hoặc giữa các thiết bị.</p>
+</aside></main>
+<section id="adminPanel" aria-label="Admin dashboard">
+ <div class="adminBox">
+  <div class="row" style="justify-content:space-between;align-items:center">
+   <h2>Admin dashboard – tổng hợp 2 readers</h2>
+   <button type="button" id="adminClose">Đóng</button>
+  </div>
+  <p class="muted">Chọn cùng một session và tải lên file CSV do reader_A và reader_B gửi. Dữ liệu được xử lý ngay trong trình duyệt, không tải lên máy chủ.</p>
+  <div class="adminNotice">Phương án A không có cơ sở dữ liệu trung tâm: dashboard chỉ tổng hợp các file CSV bạn chủ động nhận được. Hãy giữ file gốc ở nơi an toàn và không đưa dữ liệu định danh bệnh nhân lên GitHub.</div>
+  <div class="row">
+   <label>Session cần tổng hợp <select id="adminSession"></select></label>
+  </div>
+  <div class="adminGrid">
+   <div class="adminCard"><strong>File reader_A</strong><p><input type="file" id="adminFileA" accept=".csv,text/csv"></p><div id="adminNameA" class="muted">Chưa chọn file</div></div>
+   <div class="adminCard"><strong>File reader_B</strong><p><input type="file" id="adminFileB" accept=".csv,text/csv"></p><div id="adminNameB" class="muted">Chưa chọn file</div></div>
+  </div>
+  <div class="row">
+   <button type="button" id="adminAnalyze">Phân tích / cập nhật dashboard</button>
+   <button type="button" id="adminExport" disabled>Tải CSV gộp 2 readers</button>
+  </div>
+  <div id="adminStatus" class="muted" role="status">Chọn hai file CSV để bắt đầu.</div>
+  <div id="adminResults"></div>
+ </div>
+</section>
+<footer>Lăn chuột hoặc phím &uarr;/&darr; để đổi lát (từ trên xuống dưới); &larr;/&rarr; hoặc PageUp/PageDown để đổi ca.
+Cửa sổ hiển thị đã cố định cho từng cơ quan; không chỉnh được. Bên phải ảnh là bên trái bệnh nhân.</footer>
+<script src="cases_s1.js"></script>
+<script>document.write('<script src="cases_s2.js" onerror="this.remove()"><\/script>')</script>
+<script>
+//CORE-BEGIN
+var FIELDS = {"1": ["case_id", "organ", "reader_id", "judgment_real_or_synthetic", "confidence_1to5", "realism_1to5", "artifact_categories", "notes"], "2": ["case_id", "organ", "reader_id", "label_agreement_1to5", "notes"]};
+var EXTRA = ["reading_seconds"];
+var REQUIRED = {"1": ["realism_1to5", "judgment_real_or_synthetic", "confidence_1to5"], "2": ["label_agreement_1to5"]};
+function csvCell(v) { v = v == null ? "" : String(v); return /[",\r\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }
+function missing(sess, rec) { return REQUIRED[sess].filter(function (k) { return !rec || !rec[k]; }); }
+function buildCsv(sess, reader, cases, state) {
+  var cols = FIELDS[sess].concat(EXTRA), lines = [cols.join(",")];
+  cases.slice().sort(function (a, b) { return a.id < b.id ? -1 : a.id > b.id ? 1 : 0; }).forEach(function (c) {
+    var r = state[c.id] && state[c.id].done ? state[c.id] : {};
+    var base = {case_id: c.id, organ: c.organ, reader_id: reader};
+    lines.push(cols.map(function (k) { return csvCell(k in base ? base[k] : (k === "reading_seconds" ? (r.secs ? Math.round(r.secs) : "") : r[k])); }).join(","));
+  });
+  return lines.join("\n") + "\n";
+}
+function parseCsv(text) {
+  var rows = [], row = [], cell = "", q = false, i, ch;
+  text = text.replace(/^﻿/, "");
+  for (i = 0; i < text.length; i++) {
+    ch = text[i];
+    if (q) { if (ch === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; } else cell += ch; }
+    else if (ch === '"') q = true;
+    else if (ch === ",") { row.push(cell); cell = ""; }
+    else if (ch === "\n" || ch === "\r") { if (ch === "\r" && text[i + 1] === "\n") i++; row.push(cell); rows.push(row); row = []; cell = ""; }
+    else cell += ch;
+  }
+  if (cell !== "" || row.length) { row.push(cell); rows.push(row); }
+  var head = rows.shift() || [];
+  return rows.filter(function (r) { return r.join("") !== ""; }).map(function (r) {
+    var o = {}; head.forEach(function (h, j) { o[h] = r[j] == null ? "" : r[j]; }); return o; });
+}
+function importRows(sess, reader, cases, state, rows) {
+  var ids = {}, n = 0; cases.forEach(function (c) { ids[c.id] = c; });
+  rows.forEach(function (r) {
+    if (r.reader_id !== reader) throw new Error("File thuộc " + r.reader_id + ", không phải " + reader);
+    if (!ids[r.case_id]) throw new Error("Mã ca " + r.case_id + " không thuộc session " + sess);
+    if (state[r.case_id] && state[r.case_id].done) return;
+    if (missing(sess, r).length) return;
+    var rec = {done: true, secs: +r.reading_seconds || 0};
+    FIELDS[sess].slice(3).forEach(function (k) { rec[k] = r[k] || ""; });
+    state[r.case_id] = rec; n++;
+  });
+  return n;
+}
+if (typeof module !== "undefined") module.exports = {buildCsv: buildCsv, parseCsv: parseCsv, importRows: importRows, missing: missing, FIELDS: FIELDS};
+//CORE-END
+</script>
+<script>
+var PKG = "reader_v38_20261101b";
+var S = {}; if (window.CASES_S1) S["1"] = window.CASES_S1; if (window.CASES_S2) S["2"] = window.CASES_S2;
+var $ = function (id) { return document.getElementById(id); }, cv = $("cv"), ctx = cv.getContext("2d");
+var reader = null, sess = "1", list = [], idx = 0, z = 0, img = null, state = {}, t0 = null;
+var S1_FORM = [
+ ["realism_1to5", "1. Mức độ chân thực của toàn bộ hình ảnh", "radio",
+  [["1", "1 = chắc chắn đã bị chỉnh sửa"], ["2", "2 = nhiều khả năng đã bị chỉnh sửa"], ["3", "3 = không chắc"],
+   ["4", "4 = nhiều khả năng là CT thật"], ["5", "5 = không thể phân biệt với CT lâm sàng thật"]]],
+ ["judgment_real_or_synthetic", "2. Nhận định", "radio", [["real", "real"], ["synthetic", "synthetic"]]],
+ ["confidence_1to5", "3. Độ tự tin cho nhận định ở bước 2", "radio",
+  [["1", "1 = đoán"], ["2", "2"], ["3", "3 = tương đối chắc"], ["4", "4"], ["5", "5 = hoàn toàn chắc chắn"]]],
+ ["artifact_categories", "4. Dấu hiệu bất thường (nếu có)", "check",
+  [["A", "A = viền hoặc quầng quanh vị trí u"], ["B", "B = mô quá mịn, phẳng"], ["C", "C = mô lốm đốm, nhiễu bất thường"],
+   ["D", "D = mật độ (HU) không khớp mô xung quanh"], ["E", "E = hình dạng u không hợp lý"], ["F", "F = khác (ghi ở ghi chú)"]]],
+ ["notes", "5. Ghi chú", "text"]];
+var S2_FORM = [
+ ["label_agreement_1to5", "Đường viền đỏ (nhãn u) khớp với khối u nhìn thấy", "radio",
+  [["1", "1 = sai rõ (bỏ sót u, hoặc đánh dấu vùng không có u)"], ["2", "2 = lệch nhiều"], ["3", "3 = lệch vừa"],
+   ["4", "4 = chỉ lệch nhỏ ở bờ"], ["5", "5 = khớp hoàn toàn"]]],
+ ["notes", "Ghi chú", "text"]];
+function key(s) { return "trfm_reader_v1|" + PKG + "|" + reader + "|s" + s; }
+function load(s) { try { return JSON.parse(localStorage.getItem(key(s)) || "{}"); } catch (e) { return {}; } }
+function persist() { try { localStorage.setItem(key(sess), JSON.stringify(state)); } catch (e) { $("status").textContent = "Không lưu được vào trình duyệt: hãy xuất CSV thường xuyên."; } }
+function nDone(s, st) { return (S[s] || []).filter(function (c) { return st[c.id] && st[c.id].done; }).length; }
+function tick() { if (t0 === null) return; var c = list[idx], r = state[c.id] || (state[c.id] = {});
+  if (!r.done) { r.secs = (r.secs || 0) + (Date.now() - t0) / 1000; persist(); } t0 = null; }
+function startClock() { t0 = document.hidden ? null : Date.now(); }
+document.addEventListener("visibilitychange", function () { if (document.hidden) tick(); else startClock(); });
+function buildForm() {
+  var spec = sess === "1" ? S1_FORM : S2_FORM, f = $("form"); f.innerHTML = "";
+  spec.forEach(function (q) {
+    var fs = document.createElement("fieldset"), lg = document.createElement("legend"); lg.textContent = q[1]; fs.appendChild(lg);
+    if (q[2] === "text") { var t = document.createElement("textarea"); t.name = q[0]; fs.appendChild(t); }
+    else q[3].forEach(function (o) { var l = document.createElement("label"), i = document.createElement("input");
+      i.type = q[2] === "radio" ? "radio" : "checkbox"; i.name = q[0]; i.value = o[0]; l.appendChild(i);
+      l.appendChild(document.createTextNode(" " + o[1])); fs.appendChild(l); });
+    f.appendChild(fs); });
+  $("ftitle").textContent = sess === "1" ? "Session 1: độ chân thực" : "Session 2: đối chiếu nhãn";
+}
+function readForm() { var f = $("form"), r = {};
+  (sess === "1" ? S1_FORM : S2_FORM).forEach(function (q) {
+    if (q[2] === "text") r[q[0]] = f.elements[q[0]].value.trim();
+    else if (q[2] === "radio") { var c = f.querySelector('input[name="' + q[0] + '"]:checked'); r[q[0]] = c ? c.value : ""; }
+    else r[q[0]] = Array.prototype.map.call(f.querySelectorAll('input[name="' + q[0] + '"]:checked'), function (x) { return x.value; }).join(";"); });
+  return r; }
+function fillForm(r, locked) { var f = $("form"); r = r || {};
+  Array.prototype.forEach.call(f.elements, function (el) {
+    if (el.tagName === "TEXTAREA") el.value = r[el.name] || "";
+    else if (el.type === "radio") el.checked = r[el.name] === el.value;
+    else if (el.type === "checkbox") el.checked = (r[el.name] || "").split(";").indexOf(el.value) >= 0;
+    el.disabled = !!locked; });
+  $("save").disabled = !!locked; }
+function refresh() { var c = list[idx], r = state[c.id];
+  fillForm(r, r && r.done);
+  $("status").className = r && r.done ? "ok" : "muted";
+  $("status").textContent = r && r.done ? "Đã lưu ca này (khóa, không sửa lại)." : "Chưa lưu.";
+  var d = nDone(sess, state); $("progress").textContent = "Đã đánh giá " + d + "/" + list.length + " ca (" + reader + ", session " + sess + ").";
+  Array.prototype.forEach.call($("case").options, function (o, i) { var cc = list[i]; o.text = (state[cc.id] && state[cc.id].done ? "✓ " : "· ") + cc.id + " (" + cc.organ + ")"; });
+  $("case").value = idx; }
+function loadSession() { if (list.length) tick(); sess = $("sess").value; list = S[sess]; state = load(sess); $("case").innerHTML = "";
+  list.forEach(function (c, i) { $("case").add(new Option(c.id, i)); });
+  buildForm();
+  $("banner").textContent = sess === "2" && nDone("1", load("1")) < (S["1"] || []).length ?
+    "Lưu ý: trình duyệt này chưa có đủ kết quả session 1 của " + reader + ". Hãy chắc chắn anh/chị đã nộp session 1 trước khi làm session 2." : "";
+  var first = list.findIndex(function (c) { return !(state[c.id] && state[c.id].done); }); open(first < 0 ? 0 : first); }
+function open(i) { if (list.length && img) tick(); idx = Math.max(0, Math.min(list.length - 1, i));
+  var c = list[idx]; z = 0; $("slice").max = c.n - 1; $("slice").value = 0;
+  img = new Image(); img.onload = draw; img.src = c.src; refresh(); startClock(); }
+function draw() { if (!img || !img.complete) return; var c = list[idx], s = +$("zoom").value;
+  var W = c.w * s, H = c.h * s * (c.sy / c.sx); cv.width = W; cv.height = H; ctx.imageSmoothingEnabled = false;
+  var r = Math.floor(z / c.cols), k = z % c.cols;
+  ctx.drawImage(img, k * c.w, r * c.h, c.w, c.h, 0, 0, W, H);
+  $("info").textContent = c.id + " · " + c.organ + " · lát " + (z + 1) + "/" + c.n; }
+function step(d) { var c = list[idx]; z = Math.max(0, Math.min(c.n - 1, z + d)); $("slice").value = z; draw(); }
+$("form").addEventListener("change", function (e) {
+  if (e.target.type === "radio" || e.target.type === "checkbox") e.target.blur();
+  var c = list[idx], r = state[c.id] || (state[c.id] = {}); if (r.done) return;
+  var v = readForm(); for (var k in v) r[k] = v[k]; persist(); });
+$("form").addEventListener("input", function (e) { if (e.target.tagName === "TEXTAREA") {
+  var c = list[idx], r = state[c.id] || (state[c.id] = {}); if (!r.done) { r[e.target.name] = e.target.value; persist(); } } });
+$("save").onclick = function () { var c = list[idx], v = readForm(), m = missing(sess, v);
+  if (m.length) { $("status").className = "warn"; $("status").textContent = "Chưa điền: " + m.join(", "); return; }
+  if (sess === "1" && v.artifact_categories.indexOf("F") >= 0 && !v.notes) { $("status").className = "warn"; $("status").textContent = "Đã chọn F: hãy mô tả ở ghi chú."; return; }
+  tick(); var r = state[c.id] || {}; for (var k in v) r[k] = v[k]; r.done = true; state[c.id] = r; persist();
+  var nxt = list.findIndex(function (cc, i) { return i > idx && !(state[cc.id] && state[cc.id].done); });
+  if (nxt < 0) nxt = list.findIndex(function (cc) { return !(state[cc.id] && state[cc.id].done); });
+  if (nxt < 0) { refresh(); $("status").textContent = "Đã đánh giá xong session " + sess + ". Bấm \"Xuất CSV session này\"."; } else open(nxt); };
+$("export").onclick = function () { tick(); startClock(); var d = nDone(sess, state), name = "session" + sess + "_form_" + reader;
+  if (d < list.length) { if (!confirm("Còn " + (list.length - d) + " ca chưa đánh giá. Xuất bản nháp (không dùng để phân tích)?")) return; name += "_NHAP"; }
+  var blob = new Blob([buildCsv(sess, reader, list, state)], {type: "text/csv;charset=utf-8"}), a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = name + ".csv"; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000); };
+$("import").onchange = function (e) { var f = e.target.files[0]; if (!f) return; var rd = new FileReader();
+  rd.onload = function () { try { var n = importRows(sess, reader, list, state, parseCsv(rd.result)); persist(); refresh();
+      alert("Đã nhập " + n + " ca từ file."); } catch (err) { alert("Không nhập được: " + err.message); } e.target.value = ""; };
+  rd.readAsText(f, "utf-8"); };
+["1", "2"].forEach(function (k) { var o = new Option(k, k); if (!S[k]) { o.disabled = true; o.text = k + " (chưa mở, sau washout)"; } $("sess").add(o); });
+$("sess").onchange = loadSession; $("case").onchange = function (e) { open(+e.target.value); };
+$("prev").onclick = function () { open(idx - 1); }; $("next").onclick = function () { open(idx + 1); };
+$("slice").oninput = function (e) { z = +e.target.value; draw(); }; $("zoom").oninput = draw;
+$("wrap").addEventListener("wheel", function (e) { e.preventDefault(); step(e.deltaY > 0 ? 1 : -1); }, {passive: false});
+addEventListener("keydown", function (e) { var t = e.target.tagName; if (t === "SELECT" || t === "INPUT" || t === "TEXTAREA" || !reader) return;
+  if (e.key === "ArrowDown") step(1); else if (e.key === "ArrowUp") step(-1);
+  else if (e.key === "ArrowRight" || e.key === "PageDown") open(idx + 1);
+  else if (e.key === "ArrowLeft" || e.key === "PageUp") open(idx - 1); else return; e.preventDefault(); });
+addEventListener("beforeunload", function () { if (reader) tick(); });
+Array.prototype.forEach.call(document.querySelectorAll('input[name="who"]'), function (i) { i.onchange = function () { $("enter").disabled = false; }; });
+$("enter").onclick = function () { reader = document.querySelector('input[name="who"]:checked').value; $("gate").remove();
+  $("sess").value = S["2"] && nDone("1", load("1")) === (S["1"] || []).length ? "2" : "1"; loadSession(); };
+
+// ADMIN DASHBOARD: local CSV aggregation for reader_A and reader_B (no server/database).
+var adminFiles = {reader_A: null, reader_B: null}, adminRows = {reader_A: null, reader_B: null}, adminCombined = [];
+function adminEscape(v) { return String(v == null ? "" : v).replace(/[&<>"']/g, function (c) { return ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]); }); }
+function adminReadFile(file, expectedReader, callback) {
+  if (!file) { callback(new Error("Vui lòng chọn file của " + expectedReader)); return; }
+  var rd = new FileReader();
+  rd.onload = function () {
+    try {
+      var rows = parseCsv(rd.result), sessionKey = $("adminSession").value, valid = [], allowed = {};
+      (S[sessionKey] || []).forEach(function (c) { allowed[c.id] = true; });
+      rows.forEach(function (r) {
+        if (!r.case_id) return;
+        if (r.reader_id !== expectedReader) throw new Error("File được chọn không phải của " + expectedReader + ".");
+        if (!allowed[r.case_id]) throw new Error("Mã ca không hợp lệ trong file " + expectedReader + ": " + r.case_id);
+        if (!missing(sessionKey, r).length) valid.push(r);
+      });
+      var seen = {};
+      valid.forEach(function (r) { if (seen[r.case_id]) throw new Error("File có mã ca bị lặp: " + r.case_id); seen[r.case_id] = true; });
+      callback(null, valid);
+    } catch (err) { callback(err); }
+  };
+  rd.onerror = function () { callback(new Error("Không đọc được file CSV.")); };
+  rd.readAsText(file, "utf-8");
+}
+function adminMean(rows, key) {
+  var vals = rows.map(function (r) { return Number(r[key]); }).filter(function (v) { return isFinite(v); });
+  return vals.length ? (vals.reduce(function (a,b) { return a+b; }, 0) / vals.length).toFixed(2) : "—";
+}
+function adminKappa(a, b) {
+  var labels = ["real", "synthetic"], n = 0, agree = 0, row = {real:0,synthetic:0}, col = {real:0,synthetic:0};
+  a.forEach(function (r) {
+    var other = b[r.case_id];
+    if (!other || labels.indexOf(r.judgment_real_or_synthetic) < 0 || labels.indexOf(other.judgment_real_or_synthetic) < 0) return;
+    var x = r.judgment_real_or_synthetic, y = other.judgment_real_or_synthetic;
+    n++; if (x === y) agree++; row[x]++; col[y]++;
+  });
+  if (!n) return {n:0, value:"—"};
+  var po = agree/n, pe = (row.real*col.real + row.synthetic*col.synthetic)/(n*n);
+  return {n:n, value: pe === 1 ? (po === 1 ? "1.00" : "—") : ((po-pe)/(1-pe)).toFixed(2)};
+}
+function adminRender(aRows, bRows, sessionKey) {
+  var aMap = {}, bMap = {}, common = [], all = [];
+  aRows.forEach(function (r) { aMap[r.case_id] = r; all.push(Object.assign({session:sessionKey},r)); });
+  bRows.forEach(function (r) { bMap[r.case_id] = r; all.push(Object.assign({session:sessionKey},r)); });
+  Object.keys(aMap).forEach(function (id) { if (bMap[id]) common.push(id); });
+  common.sort();
+  var html = '<div class="adminGrid">' +
+    '<div class="adminCard"><strong>Reader A</strong><div>' + aRows.length + ' / ' + (S[sessionKey]||[]).length + ' ca hoàn tất</div>' +
+    (sessionKey === "1" ? '<div>Realism TB: ' + adminMean(aRows,"realism_1to5") + '</div><div>Confidence TB: ' + adminMean(aRows,"confidence_1to5") + '</div>' : '<div>Agreement TB: ' + adminMean(aRows,"label_agreement_1to5") + '</div>') + '</div>' +
+    '<div class="adminCard"><strong>Reader B</strong><div>' + bRows.length + ' / ' + (S[sessionKey]||[]).length + ' ca hoàn tất</div>' +
+    (sessionKey === "1" ? '<div>Realism TB: ' + adminMean(bRows,"realism_1to5") + '</div><div>Confidence TB: ' + adminMean(bRows,"confidence_1to5") + '</div>' : '<div>Agreement TB: ' + adminMean(bRows,"label_agreement_1to5") + '</div>') + '</div>' +
+    '<div class="adminCard"><strong>Đối chiếu</strong><div>' + common.length + ' ca có đủ cả hai đánh giá</div>' +
+    (sessionKey === "1" ? '<div>Đồng thuận real/synthetic: ' + (common.length ? (100*common.filter(function(id){return aMap[id].judgment_real_or_synthetic===bMap[id].judgment_real_or_synthetic;}).length/common.length).toFixed(1)+'%' : '—') + '</div>' : '<div>Chênh lệch tuyệt đối agreement TB: ' + (common.length ? (common.reduce(function(s,id){return s+Math.abs(Number(aMap[id].label_agreement_1to5)-Number(bMap[id].label_agreement_1to5));},0)/common.length).toFixed(2) : '—') + '</div>') +
+    (sessionKey === "1" ? '<div>Cohen’s κ: ' + adminKappa(aRows,bMap).value + ' (n=' + adminKappa(aRows,bMap).n + ')</div>' : '') + '</div></div>';
+  html += '<h3>Đối chiếu theo từng ca (' + common.length + ' ca có đủ dữ liệu)</h3><div class="adminTableWrap"><table><thead><tr><th>Case</th><th>Reader A</th><th>Reader B</th><th>Kết quả</th></tr></thead><tbody>';
+  common.forEach(function(id) {
+    var x = aMap[id], y = bMap[id], left, right, outcome;
+    if (sessionKey === "1") {
+      left = x.judgment_real_or_synthetic + ' / realism ' + x.realism_1to5;
+      right = y.judgment_real_or_synthetic + ' / realism ' + y.realism_1to5;
+      outcome = (x.judgment_real_or_synthetic === y.judgment_real_or_synthetic ? 'Cùng nhận định' : 'Khác nhận định') + '; |Δ realism|=' + Math.abs(Number(x.realism_1to5)-Number(y.realism_1to5));
+    } else {
+      left = 'Agreement ' + x.label_agreement_1to5; right = 'Agreement ' + y.label_agreement_1to5;
+      outcome = '|Δ|=' + Math.abs(Number(x.label_agreement_1to5)-Number(y.label_agreement_1to5));
+    }
+    html += '<tr><td>' + adminEscape(id) + '</td><td>' + adminEscape(left) + '</td><td>' + adminEscape(right) + '</td><td>' + adminEscape(outcome) + '</td></tr>';
+  });
+  html += '</tbody></table></div>';
+  if (!common.length) html += '<p class="muted">Chưa có ca nào có đủ dữ liệu từ cả hai readers.</p>';
+  $("adminResults").innerHTML = html;
+  adminCombined = all;
+  $("adminExport").disabled = !all.length;
+}
+function adminDownloadCombined() {
+  if (!adminCombined.length) return;
+  var cols = Object.keys(adminCombined[0]), lines = [cols.join(",")];
+  adminCombined.forEach(function(r){ lines.push(cols.map(function(k){return csvCell(r[k]);}).join(",")); });
+  var blob = new Blob(["\ufeff"+lines.join("\r\n")+"\r\n"],{type:"text/csv;charset=utf-8"}), a=document.createElement("a");
+  a.href=URL.createObjectURL(blob); a.download="reader_study_session"+$("adminSession").value+"_combined.csv";
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(function(){URL.revokeObjectURL(a.href);},1000);
+}
+$("adminOpen").onclick = function () {
+  $("adminPanel").style.display = "block";
+  $("adminSession").innerHTML = "";
+  Object.keys(S).forEach(function(k){$("adminSession").add(new Option("Session "+k,k));});
+  $("adminStatus").textContent = "Chọn file CSV của cả hai readers.";
+};
+$("adminClose").onclick = function () { $("adminPanel").style.display = "none"; };
+$("adminFileA").onchange = function(e){adminFiles.reader_A=e.target.files[0]||null;$("adminNameA").textContent=adminFiles.reader_A?adminFiles.reader_A.name:"Chưa chọn file";};
+$("adminFileB").onchange = function(e){adminFiles.reader_B=e.target.files[0]||null;$("adminNameB").textContent=adminFiles.reader_B?adminFiles.reader_B.name:"Chưa chọn file";};
+$("adminAnalyze").onclick = function(){
+  $("adminStatus").textContent = "Đang đọc và kiểm tra hai file CSV…";
+  var sessionKey=$("adminSession").value, a=null,b=null, errors=[];
+  adminReadFile(adminFiles.reader_A,"reader_A",function(err,rows){
+    if(err) errors.push(err.message); else a=rows;
+    if(a!==null || errors.length){ finishA(); }
+  });
+  function finishA(){
+    if(errors.length){$("adminStatus").textContent="Lỗi: "+errors.join(" ");$("adminResults").innerHTML="";$("adminExport").disabled=true;return;}
+    adminReadFile(adminFiles.reader_B,"reader_B",function(err,rows){
+      if(err){$("adminStatus").textContent="Lỗi: "+err.message;$("adminResults").innerHTML="";$("adminExport").disabled=true;return;}
+      b=rows; adminRender(a,b,sessionKey);
+      $("adminStatus").textContent="Đã tổng hợp thành công. Dữ liệu vẫn chỉ nằm trong trình duyệt của admin.";
+    });
+  }
+};
+$("adminExport").onclick = adminDownloadCombined;
+
+</script></body></html>
